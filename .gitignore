@@ -1,0 +1,7 @@
+__pycache__/
+ergon.sqlite3
+ergon.sqlite3-shm
+ergon.sqlite3-wal
+# Built by server.py --install-launch-agent
+notifier/Ergon.app/
+.DS_Store

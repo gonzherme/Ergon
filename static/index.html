@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#161816" media="(prefers-color-scheme: dark)">
+    <title>Ergon</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="manifest" href="/static/manifest.webmanifest">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+    <script src="/static/goals.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Lists">
+        <nav class="nav-group" id="views">
+          <a class="nav-row" href="#today" data-view="today" data-key="today" data-drop="today" draggable="false">
+            <span class="nav-name">Today</span><span class="nav-count" id="count-today"></span>
+          </a>
+          <a class="nav-row" href="#week" data-view="week" data-key="week" draggable="false">
+            <span class="nav-name">Week</span><span class="nav-count" id="count-week"></span>
+          </a>
+          <a class="nav-row" href="#inbox" data-view="inbox" data-key="inbox" data-drop="inbox" draggable="false">
+            <span class="nav-name">Inbox</span><span class="nav-count" id="count-inbox"></span>
+          </a>
+          <a class="nav-row" href="#habits" data-view="habits" data-key="habits" draggable="false">
+            <span class="nav-name">Repeating</span><span class="nav-count" id="count-habits"></span>
+          </a>
+          <a class="nav-row" href="#goals" data-view="goals" data-key="goals" draggable="false">
+            <span class="nav-name">Goals</span>
+          </a>
+          <a class="nav-row" href="#search" data-view="search" data-key="search" draggable="false">
+            <span class="nav-name">Search</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-heading">
+          <span>Projects</span>
+          <button class="add-project" id="add-project" type="button" title="New project" aria-label="New project">+</button>
+        </div>
+        <nav class="nav-group" id="project-list"></nav>
+        <form class="new-project" id="new-project" hidden>
+          <input id="new-project-input" type="text" placeholder="Project name" autocomplete="off" aria-label="Project name">
+        </form>
+
+        <button class="completed-toggle" id="completed-toggle" type="button" hidden></button>
+        <nav class="nav-group completed-projects" id="completed-projects" hidden></nav>
+
+        <button class="help-toggle" id="help-toggle" type="button">Shortcuts <kbd>?</kbd></button>
+      </aside>
+
+      <main class="main-area" id="main">
+        <div class="goals" id="goals" hidden>
+          <div class="goal-plane" id="goal-plane">
+            <svg class="goal-arrows" aria-hidden="true">
+              <g id="goal-arrows"></g>
+              <g class="goal-arrow pending" id="goal-pending" style="display: none"><line class="shaft"/><path class="head"/></g>
+            </svg>
+            <div id="goal-boxes"></div>
+          </div>
+          <p class="goals-empty" id="goals-empty">Double-click anywhere to add a box.<br>Drag from a box's dot to another box to join them.</p>
+        </div>
+        <div class="column">
+          <header class="page-heading">
+            <div class="heading-line">
+              <h1 id="page-title"></h1>
+              <button class="ghost-button" id="project-menu" type="button" aria-label="Project actions" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+              </button>
+              <div class="week-nav" id="goals-nav" hidden>
+                <button class="step-button" id="goals-out" type="button" aria-label="Zoom out">−</button>
+                <button class="step-button" id="goals-all" type="button">Show All</button>
+                <button class="step-button" id="goals-in" type="button" aria-label="Zoom in">+</button>
+              </div>
+              <div class="week-nav" id="week-nav" hidden>
+                <button class="step-button" id="week-prev" type="button" aria-label="Previous week">‹</button>
+                <button class="step-button" id="week-today" type="button">Today</button>
+                <button class="step-button" id="week-next" type="button" aria-label="Next week">›</button>
+                <button class="step-button plan-button" id="week-plan" type="button">Plan</button>
+              </div>
+            </div>
+            <p id="page-subtitle"></p>
+            <p class="project-description" id="project-description" hidden></p>
+            <div class="search-bar" id="search-bar" hidden>
+              <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.2 4.2"/></svg>
+              <input id="search-input" type="search" autocomplete="off" spellcheck="false">
+              <button class="clear-search" id="clear-search" type="button" aria-label="Clear search" hidden>×</button>
+            </div>
+            <p class="no-matches" id="no-matches" hidden>No tasks match.</p>
+          </header>
+          <div id="groups"></div>
+        </div>
+      </main>
+    </div>
+
+    <div class="popover" id="popover" tabindex="-1" hidden></div>
+
+    <div class="overlay" id="capture" hidden>
+      <form class="capture-box" id="capture-form">
+        <textarea id="capture-input" rows="1" placeholder="Jot something down" autocomplete="off" aria-label="Add to Inbox"></textarea>
+        <span class="capture-hint">Goes to Inbox</span>
+      </form>
+    </div>
+
+    <div class="overlay" id="help" hidden>
+      <div class="help-box" role="dialog" aria-label="Keyboard shortcuts">
+        <h2>Shortcuts</h2>
+        <dl>
+          <dt><kbd>⌘ T</kbd> <kbd>⌘ U</kbd> <kbd>⌘ I</kbd></dt><dd>Today, Week, Inbox</dd>
+          <dt><kbd>⇧ ⌘ U</kbd></dt><dd>Plan the week, from the Inbox or a project</dd>
+          <dt><kbd>⌘ J</kbd></dt><dd>Jot to Inbox, from any view</dd>
+          <dt><kbd>⌃ ⌥ Space</kbd></dt><dd>Jot to Inbox from any app, with Ergon's Mac app open</dd>
+          <dt><kbd>⌘ L</kbd></dt><dd>Search all tasks</dd>
+          <dt><kbd>⌘ F</kbd></dt><dd>Search the list on screen</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Leave the text box and move through tasks</dd>
+          <dt><kbd>⌃ N</kbd> <kbd>⌃ P</kbd></dt><dd>Next or previous task (or <kbd>↓</kbd> <kbd>↑</kbd>)</dd>
+          <dt><kbd>⌥ ↑</kbd> <kbd>⌥ ↓</kbd></dt><dd>Move the selected task</dd>
+          <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous or next week, in Week</dd>
+          <dt>Mouse side buttons</dt><dd>Previous or next day in Today, week in Week</dd>
+          <dt><kbd>⌥ ←</kbd> <kbd>⌥ →</kbd></dt><dd>Move the selected task a day, in Week</dd>
+          <dt>Right-click</dt><dd>A task's actions</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Mark done, or save an edit</dd>
+          <dt><kbd>e</kbd></dt><dd>Edit</dd>
+          <dt><kbd>t</kbd></dt><dd>Move to Today, or off it</dd>
+          <dt><kbd>d</kbd></dt><dd>Pick a day</dd>
+          <dt><kbd>r</kbd></dt><dd>Set a reminder</dd>
+          <dt><kbd>p</kbd></dt><dd>Move to a project</dd>
+          <dt><kbd>m</kbd></dt><dd>Time it takes, such as 4h, 15m or 1h30m, in the box at its end (or end a task with ~1h)</dd>
+          <dt><kbd>⌫</kbd></dt><dd>Delete</dd>
+          <dt><kbd>n</kbd></dt><dd>Add a task, or a box in Goals</dd>
+          <dt>Double-click</dt><dd>Add a box, in Goals</dd>
+          <dt><kbd>Tab</kbd></dt><dd>Add a box joined to the selected one, in Goals</dd>
+          <dt><kbd>⇧ Enter</kbd></dt><dd>New line in a box, in Goals</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" hidden>
+      <span id="toast-message"></span>
+      <button id="toast-undo" type="button">Undo</button>
+    </div>
+  </body>
+</html>
