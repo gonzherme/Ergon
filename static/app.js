@@ -3,6 +3,7 @@
 const ICONS = {
   check: '<svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   bell: '<svg viewBox="0 0 24 24"><path d="M6.5 10a5.5 5.5 0 0 1 11 0c0 5 2 6.5 2 6.5h-15s2-1.5 2-6.5ZM10 19.5a2.2 2.2 0 0 0 4 0"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></svg>',
   repeat: '<svg viewBox="0 0 24 24"><path d="M4.5 11.5V10A3.5 3.5 0 0 1 8 6.5h11.5M16.5 3.5l3 3-3 3M19.5 12.5V14a3.5 3.5 0 0 1-3.5 3.5H4.5M7.5 20.5l-3-3 3-3"/></svg>',
 };
 
@@ -31,6 +32,7 @@ const projectMenuButton = document.getElementById("project-menu");
 const projectList = document.getElementById("project-list");
 const viewsNav = document.getElementById("views");
 const weekNav = document.getElementById("week-nav");
+const habitsNav = document.getElementById("habits-nav");
 const planButton = document.getElementById("week-plan");
 const searchBar = document.getElementById("search-bar");
 const searchInput = document.getElementById("search-input");
@@ -46,7 +48,7 @@ const captureInput = document.getElementById("capture-input");
 const help = document.getElementById("help");
 const toastEl = document.getElementById("toast");
 
-const state = { tag: "", today: "", projects: [], tasks: [], boxes: [], arrows: [], time: { weekdays: {}, days: {} } };
+const state = { tag: "", today: "", projects: [], folders: [], tasks: [], boxes: [], arrows: [], time: { weekdays: {}, days: {} } };
 let view = parseHash();
 let renderedView = "";
 let selectedId = null;
@@ -57,7 +59,7 @@ let afterPopover = null;
 let toastTimer = 0;
 // The first day of the week shown in Week; null follows today.
 let shownWeek = null;
-// The list Planning shows beside the week: "inbox", "overdue" or "project:<id>".
+// The list Sprint Plan shows beside the week: "inbox", which has Overdue in it, or "project:<id>".
 let planFrom = "inbox";
 // The day shown in Today, which the mouse's side buttons step through; null follows today.
 let shownDay = null;
@@ -119,6 +121,7 @@ function reminderLabel(remindAt, taskDay) {
 }
 
 // Lists: "inbox", "day:YYYY-MM-DD", "project:<id>", "overdue" for tasks whose day has passed, "habits",
+// "repeating" for what Repeating shows, each repeating task once at its next date,
 // "habits:today" for habits due today or missed, and "search" for every task. Every list but Search keeps
 // the order its tasks are dragged into: a task's place on its day, in its project or the Inbox, in Habits,
 // and in Overdue are kept apart. Search puts the best matches first.
@@ -132,13 +135,15 @@ const isHabit = (task) => Boolean(task.done_at ? task.series_id : task.repeat);
 // Habit lists show the habits finished today, so a tap by mistake can be undone there.
 const habitShown = (task) => isHabit(task) && (!task.done_at || finishedToday(task));
 // Lists that hold tasks from many days, so a task new to one has no place there yet and goes after the rest, by day.
-const MANY_DAYS = ["overdue", "habits", "habits:today"];
+const MANY_DAYS = ["overdue", "habits", "habits:today", "repeating"];
 
 function inList(task, list) {
   if (list === "search") return true;
   if (list === "inbox") return !task.project_id && !task.day;
-  if (list === "overdue") return isOverdue(task) && !isHabit(task) && (!task.done_at || finishedToday(task));
+  // A finished task is no longer overdue, so it leaves Overdue at once; its own day in Week still shows it.
+  if (list === "overdue") return isOverdue(task) && !isHabit(task) && !task.done_at;
   if (list === "habits") return habitShown(task);
+  if (list === "repeating") return Boolean(task.repeat && !task.done_at);
   if (list === "habits:today") return habitShown(task) && task.day <= state.today;
   if (list.startsWith("day:")) return task.day === list.slice(4);
   return task.project_id === list.slice(8);
@@ -146,14 +151,15 @@ function inList(task, list) {
 
 function rankKey(list) {
   if (list === "overdue") return "overdue_rank";
-  if (list.startsWith("habits")) return "habit_rank";
+  if (list.startsWith("habits") || list === "repeating") return "habit_rank";
   return list.startsWith("day:") ? "day_rank" : "list_rank";
 }
 
 // Whether a list shows a task in its place: a finished one, until the day ends. A repeating task finished
 // today stands in for its next date, which stays out of sight till then wherever both would show.
 function inPlace(task, list) {
-  if (list.startsWith("day:")) return true;
+  // Repeating moves a task on to its next date as soon as it is finished, as Reminders does.
+  if (list.startsWith("day:") || list === "repeating") return true;
   if (task.done_at) return finishedToday(task);
   return !task.series_id || !state.tasks.some((other) => other.next_id === task.id && finishedToday(other));
 }
@@ -182,6 +188,8 @@ function nextRank(list) {
 
 const findTask = (id) => state.tasks.find((task) => task.id === id);
 const findProject = (id) => state.projects.find((project) => project.id === id);
+const findFolder = (id) => state.folders.find((folder) => folder.id === id);
+const sortedFolders = () => [...state.folders].sort((a, b) => a.rank - b.rank);
 
 function viewKey() {
   if (view.plan) return "plan";
@@ -217,19 +225,19 @@ function groupsForView() {
       ...(listTasks("habits:today").length ? [{ list: "habits:today", takes: isHabit, part: "habits", title: "Repeating" }] : []),
     ];
   }
-  if (view.kind === "inbox") {
-    // Tasks whose day has passed come first, oldest first, to be planned again. Only they can be put in
-    // order there: anything else would have to move into the past. One dragged down into the Inbox loses
-    // its day, but a project's stays in its project.
-    const overdue = listTasks("overdue").length > 0;
-    return [
-      ...(overdue ? [{ list: "overdue", takes: (task) => inList(task, "overdue"), part: "overdue", title: "Overdue" }] : []),
-      { list: "inbox", takes: (task) => !task.project_id, title: overdue ? "Inbox" : "", placeholder: "Jot something down",
-        emptyText: overdue ? "" : "Nothing waiting to be sorted." },
-    ];
-  }
+  if (view.kind === "inbox") return inboxGroups();
   if (view.kind === "habits") {
-    return [{ list: "habits", takes: isHabit, placeholder: "Add a repeating task", emptyText: "Nothing repeats yet. Add a task, then choose how often it comes back." }];
+    // Repeating tasks in no folder come first, then each folder's. Any of them takes in a repeating task
+    // dragged there, which moves it to that folder.
+    const folders = sortedFolders();
+    return [
+      { list: "repeating", folder: null, takes: (task) => !findFolder(task.folder_id), accepts: isHabit,
+        placeholder: "Add a repeating task", emptyText: folders.length ? "" : "Nothing repeats yet. Add a task, then choose how often it comes back." },
+      ...folders.map((folder) => ({
+        list: "repeating", key: `folder:${folder.id}`, folder: folder.id, title: folder.title, takes: (task) => task.folder_id === folder.id,
+        accepts: isHabit, placeholder: `Add to ${folder.title}`, emptyText: "Nothing in this folder yet.",
+      })),
+    ];
   }
   if (view.kind === "project") return [{ list: `project:${view.id}`, placeholder: "Add a task", emptyText: "" }];
   if (view.kind === "search") return [{ list: "search", part: "results" }];
@@ -242,20 +250,35 @@ function groupsForView() {
     const takes = day < state.today ? (task) => task.day === day : null;
     return { list: `day:${day}`, day, week: true, compact: true, past: day < state.today, takes, placeholder };
   });
-  return view.plan ? [backlogGroup(), ...days] : days;
+  return view.plan ? [backlog(), ...days] : days;
 }
 
-// Planning puts what has no day yet beside the week: the Inbox, tasks left open on past days, or a project's.
-const inBacklog = (task, list) => (list.startsWith("project:") ? task.project_id === list.slice(8) && !task.day : inList(task, list));
+// The Inbox: tasks whose day has passed come first, oldest first, to be planned again. Only they can be put
+// in order there: anything else would have to move into the past. One dragged down into the Inbox loses its
+// day, but a project's stays in its project. Sprint Plan shows the same.
+function inboxGroups() {
+  const overdue = listTasks("overdue").length > 0;
+  return [
+    ...(overdue ? [{ list: "overdue", takes: (task) => inList(task, "overdue"), part: "overdue", title: "Overdue" }] : []),
+    // A repeating task, dragged from a day in Sprint Plan, keeps its days.
+    { list: "inbox", takes: (task) => !task.project_id && !isHabit(task), title: overdue ? "Inbox" : "", placeholder: "Jot something down",
+      emptyText: overdue ? "" : "Nothing waiting to be sorted." },
+  ];
+}
 
-function backlogGroup() {
+// What the Inbox's count, and its line in Sprint Plan's menu, count: its own tasks and overdue ones.
+const inInbox = (task) => inList(task, "inbox") || inList(task, "overdue");
+const undatedIn = (task, projectId) => task.project_id === projectId && !task.day;
+
+// Sprint Plan puts what has no day yet beside the week, to drag onto days: the Inbox as it shows in its own
+// view, or a project's tasks with no day.
+function backlog() {
   if (planFrom.startsWith("project:") && !findProject(planFrom.slice(8))) planFrom = "inbox";
-  const list = planFrom;
-  const project = list.startsWith("project:") ? findProject(list.slice(8)) : null;
-  const group = { list, key: `backlog:${list}`, backlog: true, takes: (task) => inBacklog(task, list) };
-  if (list === "overdue") return { ...group, title: "Overdue", part: "overdue", emptyText: "Nothing left over." };
-  if (project) return { ...group, title: project.title, placeholder: "Add a task", emptyText: "Everything here has a day." };
-  return { ...group, title: "Inbox", placeholder: "Jot something down", emptyText: "Nothing waiting to be sorted." };
+  const project = planFrom.startsWith("project:") ? findProject(planFrom.slice(8)) : null;
+  const groups = project
+    ? [{ list: planFrom, takes: (task) => undatedIn(task, project.id), placeholder: "Add a task", emptyText: "Everything here has a day." }]
+    : inboxGroups();
+  return { key: "backlog", title: project?.title ?? "Inbox", groups: groups.map((group) => ({ ...group, backlog: true })) };
 }
 
 // Sync: changes apply locally first, then reach the server one at a time.
@@ -299,6 +322,7 @@ async function refresh() {
     Object.assign(state, fresh, {
       tasks: adopt(state.tasks, fresh.tasks),
       projects: adopt(state.projects, fresh.projects),
+      folders: adopt(state.folders, fresh.folders),
     });
     render();
   } catch {
@@ -351,7 +375,7 @@ function splitEstimate(text) {
   return minutes > 0 && minutes <= MAX_MINUTES ? { title, minutes } : { title: text, minutes: null };
 }
 
-function createTask(title, list, repeat = null) {
+function createTask(title, list, repeat = null, folderId = null) {
   const { title: clean, minutes } = splitEstimate(title.replace(/\s+/g, " ").trim());
   if (!clean) return null;
   const id = crypto.randomUUID();
@@ -359,18 +383,19 @@ function createTask(title, list, repeat = null) {
     id, title: clean, project_id: list.startsWith("project:") ? list.slice(8) : null,
     day: list.startsWith("day:") ? list.slice(4) : null, day_rank: 0, list_rank: 0,
     remind_at: null, reminded_at: null, done_at: null, repeat, next_id: null, series_id: repeat ? id : null,
-    habit_rank: repeat ? nextRank("habits") : null, overdue_rank: null, minutes,
+    habit_rank: repeat ? nextRank("habits") : null, overdue_rank: null, minutes, folder_id: folderId,
   };
   task[rankKey(list)] = nextRank(list);
   state.tasks.push(task);
-  send("POST", "/api/tasks", { id, title: clean, list, ...(repeat ? { repeat } : {}), ...(minutes ? { minutes } : {}) });
+  send("POST", "/api/tasks", { id, title: clean, list, ...(repeat ? { repeat } : {}), ...(minutes ? { minutes } : {}),
+    ...(folderId ? { folder_id: folderId } : {}) });
   render();
   return task;
 }
 
 // A new habit comes back every day until you choose otherwise, in its schedule menu, which opens straight away.
-function createHabit(title) {
-  const task = createTask(title, `day:${state.today}`, "FREQ=DAILY");
+function createHabit(title, folderId = null) {
+  const task = createTask(title, `day:${state.today}`, "FREQ=DAILY", folderId);
   const anchor = task && groupsEl.querySelector(`.row[data-id="${task.id}"]`);
   if (!anchor) return;
   openRepeatMenu(task, anchor);
@@ -422,8 +447,18 @@ function toggleDone(task) {
   }
   const next = neighborRow(task.id);
   setDone(task, true);
+  sayDone(task);
   if (next) select(next.dataset.id);
   else clearSelection();
+}
+
+// Finishing a task usually crosses it out where it is. Where it leaves the list instead, this says so, with
+// Undo: in Repeating, which moves it straight on to its next date, and in Overdue.
+function sayDone(task) {
+  if (!task.done_at) return;
+  const following = view.kind === "habits" && findTask(task.next_id);
+  if (following) showToast(`${task.day === state.today ? "Done for today" : "Done"}. Next: ${dayLabel(following.day)}`, () => setDone(task, false));
+  else if (!groupsEl.querySelector(`.row[data-id="${task.id}"]`)) showToast("Done", () => setDone(task, false));
 }
 
 function toggleToday(task) {
@@ -438,6 +473,10 @@ function toggleToday(task) {
     setDay(task, previous);
     if (repeat) setRepeat(task, repeat);
   });
+}
+
+function setFolder(task, folderId) {
+  patchTask(task, { folder_id: folderId });
 }
 
 function setProject(task, projectId) {
@@ -506,8 +545,13 @@ function applyOrder(list, ids) {
   // Today's habits are some of Habits, in the same order.
   const whole = list === "habits:today" ? "habits" : list;
   const key = rankKey(whole);
-  // A repeating task finished today stands in for its next date, which goes wherever it is put.
   const order = withHidden(whole, ids).flatMap((id) => {
+    // Repeating shows a next date where a date finished today was, and that one goes along with it.
+    if (whole === "repeating") {
+      const finished = state.tasks.find((task) => task.next_id === id && finishedToday(task));
+      return finished ? [finished.id, id] : [id];
+    }
+    // Elsewhere, a repeating task finished today stands in for its next date, which goes wherever it is put.
     const next = findTask(findTask(id).next_id);
     return next && inList(next, whole) && !inPlace(next, whole) ? [id, next.id] : [id];
   });
@@ -518,7 +562,7 @@ function applyOrder(list, ids) {
     else if (whole.startsWith("project:")) task.project_id = whole.slice(8);
     else if (whole === "inbox") Object.assign(task, { project_id: null, day: null, repeat: null, habit_rank: null, overdue_rank: null });
   });
-  send("POST", "/api/order", { list: whole, ids: order });
+  send("POST", "/api/order", { list: whole === "repeating" ? "habits" : whole, ids: order });
   render();
 }
 
@@ -543,6 +587,32 @@ function createProject(title) {
   state.projects.push(project);
   send("POST", "/api/projects", { id: project.id, title: project.title });
   return project;
+}
+
+// Folders in Repeating. Deleting one leaves its tasks out of any folder, until Undo puts them back.
+function createFolder(title) {
+  const folder = { id: crypto.randomUUID(), title: title.trim(), rank: state.folders.reduce((rank, other) => Math.max(rank, other.rank + 1), 0) };
+  state.folders.push(folder);
+  send("POST", "/api/folders", { id: folder.id, title: folder.title });
+  render();
+  return folder;
+}
+
+function renameFolder(folder, title) {
+  folder.title = title.trim();
+  send("PATCH", `/api/folders/${folder.id}`, { title: folder.title });
+  render();
+}
+
+function deleteFolder(folder) {
+  state.folders = state.folders.filter((other) => other !== folder);
+  send("PATCH", `/api/folders/${folder.id}`, { deleted: true });
+  animated(render);
+  showToast(`Deleted ${folder.title}`, () => {
+    state.folders.push(folder);
+    send("PATCH", `/api/folders/${folder.id}`, { deleted: false });
+    animated(render);
+  });
 }
 
 function setProjectCompleted(project, completed) {
@@ -830,7 +900,7 @@ function renderSidebar() {
   window.webkit?.messageHandlers?.todayCount?.postMessage(todayCount);
   const thisWeek = startOfWeek(state.today);
   document.getElementById("count-week").textContent = countText(open.filter((task) => task.day >= thisWeek && task.day <= addDays(thisWeek, 6)).length);
-  document.getElementById("count-inbox").textContent = countText(open.filter((task) => inList(task, "inbox") || inList(task, "overdue")).length);
+  document.getElementById("count-inbox").textContent = countText(open.filter(inInbox).length);
   document.getElementById("count-habits").textContent = countText(open.filter((task) => task.repeat && task.day <= state.today).length);
 
   const projects = [...state.projects].sort((a, b) => a.rank - b.rank);
@@ -882,6 +952,7 @@ function renderMain() {
   const revealed = reveal && view.kind !== "search" ? findTask(reveal) : null;
   if (view.kind !== "search") reveal = null;
   if (revealed?.day && view.kind === "week") showWeek(startOfWeek(revealed.day), false);
+  if (revealed && view.kind === "habits" && findFolder(revealed.folder_id)) setFolderOpen(revealed.folder_id, true);
   document.body.dataset.view = view.kind;
   document.body.classList.toggle("planning", key === "plan");
 
@@ -892,7 +963,7 @@ function renderMain() {
   }
   const otherDay = view.kind === "today" && dayShown() !== state.today;
   if (document.activeElement !== pageTitle) {
-    pageTitle.textContent = project ? project.title : otherDay ? dayTitle(dayShown()) : view.plan ? "Plan"
+    pageTitle.textContent = project ? project.title : otherDay ? dayTitle(dayShown()) : view.plan ? "Sprint Plan"
       : { today: "Today", week: "Week", inbox: "Inbox", habits: "Repeating", goals: "Goals", search: "Search" }[view.kind];
   }
   pageTitle.toggleAttribute("data-editable", Boolean(project));
@@ -906,7 +977,8 @@ function renderMain() {
   if (document.activeElement !== projectDescription) showDescription(project?.description ?? "");
 
   weekNav.hidden = view.kind !== "week";
-  planButton.textContent = view.plan ? "Done" : "Plan";
+  habitsNav.hidden = view.kind !== "habits";
+  planButton.textContent = view.plan ? "Done" : "Sprint Plan";
   searchBar.hidden = view.kind !== "search" && !searchOpen;
   // A box put away takes the keyboard with it, so keys go to the list again.
   if (searchBar.hidden && document.activeElement === searchInput) searchInput.blur();
@@ -915,7 +987,9 @@ function renderMain() {
   searchInput.placeholder = view.kind === "search" ? "Search all tasks" : `Search in ${pageTitle.textContent}`;
   searchInput.setAttribute("aria-label", searchInput.placeholder);
   matching = searchMatcher();
-  syncChildren(groupsEl, groupsForView(), (group) => group.key ?? group.list, createGroup, updateGroup);
+  syncChildren(groupsEl, groupsForView(), (group) => group.key ?? group.list,
+    (group) => (group.groups ? createBacklog() : createGroup(group)),
+    (element, group) => (group.groups ? updateBacklog(element, group) : updateGroup(element, group)));
   // Searching Goals dims the boxes that don't match.
   noMatches.hidden = !searchTerms().length || view.kind === "goals" || Boolean(groupsEl.querySelector(".row, .done-toggle:not([hidden])"));
   goalsEl.hidden = goalsNav.hidden = view.kind !== "goals";
@@ -932,6 +1006,9 @@ function createGroup(group) {
   section.classList.toggle("compact", Boolean(group.compact));
   section.classList.toggle("week-day", Boolean(group.week));
   section.dataset.list = group.list;
+  // In Repeating, the folder a group is, or "" for none, so a task dropped in moves there.
+  if (group.folder !== undefined) section.dataset.folder = group.folder ?? "";
+  const draftKey = group.key ?? group.list;
   section.innerHTML = `
     <h2 class="group-title" hidden></h2>
     <ul class="rows list"></ul>
@@ -946,16 +1023,16 @@ function createGroup(group) {
   section.querySelector(".add-row").addEventListener("submit", (event) => {
     event.preventDefault();
     const input = event.currentTarget.elements[0];
-    if (group.list === "habits") createHabit(input.value);
+    if (group.list === "repeating") createHabit(input.value, group.folder ?? null);
     else createTask(input.value, group.list);
     input.value = "";
-    drafts.delete(group.list);
+    drafts.delete(draftKey);
     section.querySelector(".rows.list").lastElementChild?.scrollIntoView({ block: "nearest" });
     input.scrollIntoView({ block: "nearest" });
   });
   const box = section.querySelector(".add-row textarea");
-  box.value = drafts.get(group.list) ?? "";
-  box.addEventListener("input", () => drafts.set(group.list, box.value));
+  box.value = drafts.get(draftKey) ?? "";
+  box.addEventListener("input", () => drafts.set(draftKey, box.value));
   box.addEventListener("keydown", submitOnEnter);
   section.querySelector(".done-toggle").addEventListener("click", () => {
     setDoneOpen(group, !isDoneOpen(group));
@@ -969,13 +1046,15 @@ function createGroup(group) {
     time.addEventListener("click", () => openDayTimePopover(group.day, time));
     section.querySelector(".group-title").after(time);
   }
-  if (group.backlog) {
-    section.classList.add("backlog");
-    // A task dragged here from a day goes back to where it came from, to be planned another time.
-    section.dataset.drop = "unschedule";
+  if (group.folder) {
+    // A folder's name opens and closes it; right-clicking it renames or deletes it.
+    section.classList.add("folder");
     const title = section.querySelector(".group-title");
-    title.innerHTML = '<button class="backlog-source" type="button" aria-haspopup="menu"><span></span></button><span></span>';
-    title.querySelector("button").addEventListener("click", (event) => openBacklogMenu(event.currentTarget));
+    title.innerHTML = `<button class="folder-toggle" type="button">${ICONS.chevron}<span class="folder-name"></span></button><span class="folder-count"></span>`;
+    title.querySelector("button").addEventListener("click", () => {
+      setFolderOpen(group.folder, !isFolderOpen(group.folder));
+      animated(render);
+    });
   }
   return section;
 }
@@ -987,8 +1066,8 @@ function updateGroup(section, group) {
   if (group.part) section.dataset.part = group.part;
   else delete section.dataset.part;
   title.hidden = !group.title && !group.day;
-  if (group.backlog) {
-    title.querySelector(".backlog-source span").textContent = group.title;
+  if (group.folder) {
+    title.querySelector(".folder-name").textContent = group.title;
   } else if (group.title) {
     title.textContent = group.title;
   } else if (group.day) {
@@ -1001,12 +1080,19 @@ function updateGroup(section, group) {
   input.placeholder = group.placeholder ?? "";
   input.setAttribute("aria-label", group.placeholder ?? "");
 
-  section.takes = group.takes ?? null;
+  // What a dragged task may be dropped into, which in Repeating is more than the group shows.
+  section.takes = group.accepts ?? group.takes ?? null;
   const shown = (tasks) => (matching ? tasks.filter(matching) : tasks);
   const tasks = shown(listTasks(group.list).filter(group.takes ?? (() => true)));
-  syncChildren(section.querySelector(".rows.list"), tasks, (task) => task.id, createRow,
+  // A closed folder hides its tasks, except while searching.
+  const open = !group.folder || Boolean(matching) || isFolderOpen(group.folder);
+  syncChildren(section.querySelector(".rows.list"), open ? tasks : [], (task) => task.id, createRow,
     (row, task) => updateRow(row, task, group.list));
-  if (group.backlog) title.lastElementChild.textContent = tasks.filter((task) => !task.done_at).length || "";
+  if (group.folder) {
+    section.classList.toggle("closed", !open);
+    title.querySelector(".folder-toggle").setAttribute("aria-expanded", String(open));
+    title.querySelector(".folder-count").textContent = tasks.filter((task) => !task.done_at).length || "";
+  }
   if (group.week) updateDayTime(section.querySelector(".day-time"), group.day);
   const coming = section.querySelector(".rows.coming");
   const habits = group.week && !matching ? comingHabits(group.day) : [];
@@ -1019,7 +1105,7 @@ function updateGroup(section, group) {
   section.classList.toggle("searching", Boolean(matching));
   section.hidden = Boolean(matching && !group.week && !tasks.length && !done.length);
   const empty = section.querySelector(".empty-line");
-  empty.hidden = Boolean(tasks.length || !group.emptyText || matching);
+  empty.hidden = Boolean(tasks.length || !group.emptyText || matching || !open);
   empty.textContent = group.emptyText;
 
   const toggle = section.querySelector(".done-toggle");
@@ -1031,6 +1117,24 @@ function updateGroup(section, group) {
   doneList.hidden = !done.length || !showDone;
   syncChildren(doneList, showDone ? done : [], (task) => task.id, createRow,
     (row, task) => updateRow(row, task, group.list));
+}
+
+// Sprint Plan's list beside the week, under a name that is a menu of what it can show. A task dragged here
+// from a day goes back to where it came from, to be planned another time.
+function createBacklog() {
+  const column = document.createElement("section");
+  column.className = "backlog";
+  column.dataset.drop = "unschedule";
+  column.innerHTML = `<h2 class="backlog-title"><button class="backlog-source" type="button" aria-haspopup="menu"><span></span></button>
+    <span class="backlog-count"></span></h2><div class="backlog-groups"></div>`;
+  column.querySelector(".backlog-source").addEventListener("click", (event) => openBacklogMenu(event.currentTarget));
+  return column;
+}
+
+function updateBacklog(column, backlog) {
+  column.querySelector(".backlog-source span").textContent = backlog.title;
+  syncChildren(column.querySelector(".backlog-groups"), backlog.groups, (group) => group.key ?? group.list, createGroup, updateGroup);
+  column.querySelector(".backlog-count").textContent = column.querySelectorAll(".rows.list .row:not(.is-done)").length || "";
 }
 
 // Every project's Done list is one setting.
@@ -1215,7 +1319,7 @@ function showDay(day) {
   render();
 }
 
-// The back and forward buttons on a mouse step through time: days in Today, weeks in Week and Plan.
+// The back and forward buttons on a mouse step through time: days in Today, weeks in Week and Sprint Plan.
 // Elsewhere they do nothing, where a browser would go back or forward a view on letting go of them.
 addEventListener("mouseup", (event) => {
   const step = { 3: -1, 4: 1 }[event.button];
@@ -1238,6 +1342,7 @@ document.getElementById("week-prev").addEventListener("click", () => showWeek(ad
 document.getElementById("week-next").addEventListener("click", () => showWeek(addDays(weekShown(), 7)));
 document.getElementById("week-today").addEventListener("click", () => showWeek(startOfWeek(state.today)));
 planButton.addEventListener("click", () => goTo(view.plan ? "#week" : "#plan"));
+document.getElementById("new-folder").addEventListener("click", (event) => openFolderNamePopover(event.currentTarget));
 
 // Search
 
@@ -1336,7 +1441,9 @@ function placeOf(task) {
     return { hash: project || (task.day ? "#week" : "#inbox") };
   }
   if (task.day === state.today) return { hash: "#today" };
-  if (isOverdue(task) && finishedToday(task)) return { hash: isHabit(task) ? "#today" : "#inbox" };
+  // A habit missed and then finished today is in Today's Repeating. Another task finished after its day has
+  // left Overdue, so it is in its project, or on its day in Week.
+  if (isOverdue(task) && finishedToday(task) && isHabit(task)) return { hash: "#today" };
   const done = !finishedToday(task) && { list: project ? "project:" : "inbox" };
   if (project) return { hash: project, done };
   return task.day ? { hash: "#week" } : { hash: "#inbox", done };
@@ -1414,6 +1521,24 @@ function restoreViewOrder() {
   const names = [...new Set(saved.map((name) => (name === "upcoming" || name === "calendar" ? "week" : name)))];
   const placed = names.map((name) => links.find((link) => link.dataset.view === name)).filter(Boolean);
   viewsNav.append(...placed, ...links.filter((link) => !placed.includes(link)));
+}
+
+// Each folder stays open or closed as it was left, on this device.
+const folderKey = (id) => `ergon.folder.${id}`;
+
+function isFolderOpen(id) {
+  try {
+    return localStorage.getItem(folderKey(id)) !== "closed";
+  } catch {
+    return true;
+  }
+}
+
+function setFolderOpen(id, open) {
+  try {
+    if (open) localStorage.removeItem(folderKey(id));
+    else localStorage.setItem(folderKey(id), "closed");
+  } catch { /* A remembered preference is optional. */ }
 }
 
 function isDoneOpen(group) {
@@ -1505,7 +1630,8 @@ function updateRow(row, task, list) {
   // Search says where each task is, and that is the Inbox for one with no project or day.
   if (list === "search" && !task.project_id && !task.day) addMeta("Inbox");
   // In the habit lists, a habit with no day shown is due today.
-  if (task.day && !list.startsWith("day:") && !done && !(list.startsWith("habits") && task.day === state.today)) {
+  const habitList = list.startsWith("habits") || list === "repeating";
+  if (task.day && !list.startsWith("day:") && !done && !(habitList && task.day === state.today)) {
     addMeta(dayLabel(task.day), isOverdue(task) ? "overdue" : "");
   }
   if (task.remind_at && !done) {
@@ -1516,7 +1642,7 @@ function updateRow(row, task, list) {
     const rule = parseRule(task.repeat);
     const progress = rule.times ? `${timesDone(task, rule, state.today)}/${rule.times}` : "";
     // Habits, the list of them all, and Search say how often each comes back.
-    const text = list !== "habits" && list !== "search" ? progress : rule.times ? `${progress} this ${UNITS[rule.freq]}` : describeRule(task.repeat);
+    const text = list !== "repeating" && list !== "search" ? progress : rule.times ? `${progress} this ${UNITS[rule.freq]}` : describeRule(task.repeat);
     const repeat = addMeta(text, "repeat", ICONS.repeat);
     repeat.title = describeRule(task.repeat) + (progress ? `, ${progress} so far this ${UNITS[rule.freq]}` : "");
     repeat.setAttribute("aria-label", repeat.title);
@@ -1676,7 +1802,7 @@ groupsEl.addEventListener("keydown", (event) => {
     event.stopPropagation();
     if (input.value) {
       input.value = "";
-      drafts.delete(input.closest(".group").dataset.list);
+      drafts.delete(input.closest(".group").dataset.key);
     } else {
       input.blur();
       moveSelection(1);
@@ -1827,11 +1953,20 @@ groupsEl.addEventListener("click", (event) => {
   if (!row) return;
   const task = findTask(row.dataset.id);
   if (!task) return;
-  if (event.target.closest(".check")) setDone(task, !task.done_at);
+  if (!event.target.closest(".check")) return;
+  setDone(task, !task.done_at);
+  sayDone(task);
 });
 
 // A task's actions are in its menu, opened by right-clicking it, as in Reminders. Each shows its key.
 groupsEl.addEventListener("contextmenu", (event) => {
+  const heading = event.target.closest(".folder > .group-title");
+  const folder = heading && findFolder(heading.parentElement.dataset.folder);
+  if (folder) {
+    event.preventDefault();
+    openFolderMenu(folder, { x: event.clientX, y: event.clientY });
+    return;
+  }
   const row = event.target.closest(".row");
   const task = row && findTask(row.dataset.id);
   // While editing, the text keeps the Mac's own menu, with spelling and Look Up.
@@ -1850,8 +1985,10 @@ function openTaskMenu(task, at) {
     if (!task.done_at) {
       // A habit comes and goes by its repeat.
       if (!task.repeat) box.append(item(task.day === state.today ? "Remove from Today" : "Do Today", "t", "today"));
-      box.append(item("Pick a Day…", "d", "day"), item("Remind Me…", "r", "remind"), item("Move to Project…", "p", "project"),
-        document.createElement("hr"));
+      box.append(item("Pick a Day…", "d", "day"), item("Remind Me…", "r", "remind"), item("Move to Project…", "p", "project"));
+      // A repeating task can go in one of Repeating's folders.
+      if (task.repeat) box.append(item("Move to Folder…", "f", "folder"));
+      box.append(document.createElement("hr"));
     }
     box.append(item("Delete", "⌫", "delete", "danger"));
   });
@@ -1859,11 +1996,42 @@ function openTaskMenu(task, at) {
   popover.focus({ preventScroll: true });
 }
 
+function openFolderMenu(folder, at) {
+  openPopover(at, (box) => {
+    box.classList.add("context-menu");
+    box.append(menuItem("Rename…", "", () => openFolderNamePopover(at, folder)), menuItem("Delete Folder", "", () => deleteFolder(folder), "danger"));
+  });
+  popover.focus({ preventScroll: true });
+}
+
+// New Folder, and renaming one: its name, kept with Enter.
+function openFolderNamePopover(anchor, folder = null) {
+  openPopover(anchor, (box) => {
+    const form = document.createElement("form");
+    form.innerHTML = '<input class="popover-input" type="text" autocomplete="off" spellcheck="false">';
+    const input = form.querySelector("input");
+    input.placeholder = "Folder name";
+    input.setAttribute("aria-label", input.placeholder);
+    input.value = folder?.title ?? "";
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const title = input.value.trim();
+      if (!title) return;
+      closePopover();
+      if (folder) renameFolder(folder, title);
+      else groupsEl.querySelector(`.group[data-folder="${createFolder(title).id}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    box.append(form);
+  });
+  popover.querySelector("input").select();
+}
+
 function runAction(action, task, anchor) {
   if (action === "today") toggleToday(task);
   else if (action === "day") openDayPopover(task, anchor);
   else if (action === "remind") openReminderPopover(task, anchor);
   else if (action === "project") openProjectPopover(task, anchor);
+  else if (action === "folder") openFolderPopover(task, anchor);
   else if (action === "delete") deleteTask(task);
 }
 
@@ -2357,16 +2525,15 @@ function openDayTimePopover(day, anchor) {
   });
 }
 
-// Planning's list beside the week can be the Inbox, Overdue, or any project's tasks with no day.
+// Sprint Plan's list beside the week can be the Inbox, with Overdue, or any project's tasks with no day.
 function openBacklogMenu(anchor) {
-  const count = (list) => state.tasks.filter((task) => !task.done_at && inBacklog(task, list)).length;
+  const count = (list) => state.tasks.filter((task) => !task.done_at && (list === "inbox" ? inInbox(task) : undatedIn(task, list.slice(8)))).length;
   const choice = (label, list) => menuItem(label, String(count(list) || ""), () => {
     planFrom = list;
     animated(render);
   }, list === planFrom ? "chosen" : "");
   openPopover(anchor, (box) => {
     box.append(choice("Inbox", "inbox"));
-    if (count("overdue") || planFrom === "overdue") box.append(choice("Overdue", "overdue"));
     const projects = state.projects.filter((project) => !project.completed_at).sort((a, b) => a.rank - b.rank);
     if (projects.length) box.append(document.createElement("hr"), ...projects.map((project) => choice(project.title, `project:${project.id}`)));
   });
@@ -2374,26 +2541,40 @@ function openBacklogMenu(anchor) {
 }
 
 function openProjectPopover(task, anchor) {
+  openChooser(anchor, {
+    placeholder: "Find or create a project", none: "No project", chosen: task.project_id,
+    choices: state.projects.filter((project) => !project.completed_at).sort((a, b) => a.rank - b.rank),
+    onPick: (id) => setProject(task, id), onCreate: createProject,
+  });
+}
+
+function openFolderPopover(task, anchor) {
+  openChooser(anchor, {
+    placeholder: "Find or create a folder", none: "No folder", chosen: findFolder(task.folder_id)?.id ?? null,
+    choices: sortedFolders(), onPick: (id) => setFolder(task, id), onCreate: createFolder,
+  });
+}
+
+// Picks one of `choices` (each with an id and a title) by typing part of its title, or makes a new one
+// by its whole title; `none` takes the task out of the one it is in.
+function openChooser(anchor, { placeholder, none, chosen, choices, onPick, onCreate }) {
   openPopover(anchor, (box) => {
     const input = document.createElement("input");
     input.className = "popover-input";
-    input.placeholder = "Find or create a project";
+    input.placeholder = placeholder;
     input.setAttribute("aria-label", input.placeholder);
     const results = document.createElement("div");
     box.append(input, results);
 
-    const choose = (project) => setProject(task, project.id);
     const draw = () => {
       const query = input.value.trim();
       const lower = query.toLowerCase();
-      const matches = state.projects
-        .filter((project) => !project.completed_at && project.title.toLowerCase().includes(lower))
-        .sort((a, b) => a.rank - b.rank);
-      const items = matches.map((project) => menuItem(project.title, project.id === task.project_id ? "✓" : "", () => choose(project)));
-      if (query && !matches.some((project) => project.title.toLowerCase() === lower)) {
-        items.push(menuItem(`Create “${query}”`, "", () => choose(createProject(query))));
+      const matches = choices.filter((choice) => choice.title.toLowerCase().includes(lower));
+      const items = matches.map((choice) => menuItem(choice.title, choice.id === chosen ? "✓" : "", () => onPick(choice.id)));
+      if (query && !matches.some((choice) => choice.title.toLowerCase() === lower)) {
+        items.push(menuItem(`Create “${query}”`, "", () => onPick(onCreate(query).id)));
       }
-      if (!query && task.project_id) items.push(menuItem("No project", "", () => setProject(task, null)));
+      if (!query && chosen) items.push(menuItem(none, "", () => onPick(null)));
       results.replaceChildren(...items);
       items[0]?.classList.add("active");
     };
@@ -2713,8 +2894,13 @@ function finishDrag(commit) {
   } else if (kind === "view") {
     saveViewOrder();
   } else {
+    const group = element.closest(".group");
     const ids = [...element.parentElement.children].map((row) => row.dataset.id);
-    applyOrder(element.closest(".group").dataset.list, ids);
+    const task = findTask(element.dataset.id);
+    if (group.dataset.folder !== undefined && (findFolder(task.folder_id)?.id ?? "") !== group.dataset.folder) {
+      setFolder(task, group.dataset.folder || null);
+    }
+    applyOrder(group.dataset.list, ids);
   }
 }
 
@@ -2919,10 +3105,10 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key === "m") {
     event.preventDefault();
     row.querySelector(".task-time").focus();
-  } else if (open && { d: 1, r: 1, p: 1 }[event.key]) {
+  } else if (open && ({ d: 1, r: 1, p: 1 }[event.key] || (event.key === "f" && task.repeat))) {
     event.preventDefault();
     row.classList.add("popover-open");
-    runAction({ d: "day", r: "remind", p: "project" }[event.key], task, row);
+    runAction({ d: "day", r: "remind", p: "project", f: "folder" }[event.key], task, row);
   }
 });
 

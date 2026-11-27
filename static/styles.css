@@ -136,13 +136,20 @@ h1[data-editable] { cursor: text; }
   .week-day .add-row textarea { font-size: 13px; line-height: 18px; }
   .day-time { margin: -4px 0 8px 6px; }
 
-  /* Planning: the list to plan from takes the sidebar's place, beside the days */
-  body.planning .column { max-width: 1480px; }
-  body.planning #groups { grid-template-columns: minmax(220px, 1.5fr) repeat(7, minmax(0, 1fr)); }
+  /* Sprint Plan: the list to plan from takes the sidebar's place, beside the days. The tasks matter more than
+     the days, so the list takes the most room, and on the days a task's time goes under its title. */
+  body.planning .column { max-width: 1600px; }
+  body.planning #groups { grid-template-columns: minmax(380px, 3.6fr) repeat(7, minmax(0, 1fr)); }
+  body.planning .week-day .title { flex: 1 1 calc(100% - 24px); }
+  body.planning .week-day .meta { flex: 1 1 0; min-width: 0; }
+  body.planning .week-day .task-time { order: 4; margin-left: auto; }
+  body.planning .week-day .coming-row { flex-wrap: wrap; }
+  body.planning .week-day .coming-title { flex: 1 1 calc(100% - 24px); }
+  body.planning .week-day .coming-time { width: auto; margin-left: auto; }
   /* As tall as the days, so a task dragged back from one can be let go anywhere on it. */
-  #groups > .group.backlog { position: sticky; top: 0; align-self: start; height: calc(100vh - 182px); overflow-y: auto; margin: 0; padding: 10px 10px 0 0; }
-  .column:has(.search-bar:not([hidden])) #groups > .group.backlog { height: calc(100vh - 230px); }
-  .backlog .group-title { margin-bottom: 8px; }
+  #groups > .backlog { position: sticky; top: 0; align-self: start; height: calc(100vh - 182px); overflow-y: auto; margin: 0; padding: 10px 12px 0 0; }
+  .column:has(.search-bar:not([hidden])) #groups > .backlog { height: calc(100vh - 230px); }
+  .backlog .group-title { margin: 0 0 2px 6px; }
   .backlog .add-row { gap: 8px; padding: 0 6px; }
   .backlog .add-row .add-mark { width: 16px; }
   .backlog .add-row textarea { font-size: 13px; line-height: 18px; }
@@ -183,19 +190,30 @@ h1[data-editable] { cursor: text; }
 body.planning .plan-button { background: var(--accent); color: var(--on-accent); box-shadow: none; font-weight: 600; }
 body.planning .app-shell { grid-template-columns: minmax(0, 1fr); }
 body.planning .sidebar { display: none; }
-.backlog .group-title { display: flex; align-items: baseline; gap: 6px; }
-.backlog .group-title > span { color: var(--soft); font-size: 12px; font-weight: 400; }
+.backlog-title { display: flex; align-items: baseline; gap: 6px; margin: 0 0 10px; font: inherit; }
+.backlog-count { color: var(--soft); font-size: 12px; }
 .backlog-source { display: inline-flex; align-items: baseline; gap: 6px; margin-left: -6px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--heading); font: 500 22px/1.25 var(--serif); }
-.backlog .backlog-source span { min-width: 0; margin: 0; overflow: hidden; color: inherit; font-weight: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.backlog-source span { min-width: 0; margin: 0; overflow: hidden; color: inherit; font-weight: inherit; text-overflow: ellipsis; white-space: nowrap; }
 .backlog-source::after { content: "⌄"; position: relative; top: -4px; color: var(--muted); font: 15px/1 var(--sans); }
 .backlog-source:hover { background: var(--hover-bg); }
-.group.backlog.drop-target { background: var(--accent-wash); border-radius: 8px; }
+.backlog.drop-target { background: var(--accent-wash); border-radius: 8px; }
 
 /* Groups */
 .group { padding-bottom: 6px; }
 .group + .group { margin-top: 12px; }
 .group-title { margin: 0 0 2px 8px; font-size: 13px; font-weight: 600; color: var(--heading); }
 .group-title span { margin-left: 6px; color: var(--soft); font-weight: 400; }
+/* Folders in Repeating: a name that opens and closes it, and how many it holds. */
+.group.folder { margin-top: 18px; }
+.folder .group-title { display: flex; align-items: center; gap: 2px; margin-left: 0; }
+.folder-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px 2px 2px; border: 0; border-radius: 6px; background: transparent; color: var(--heading); font: inherit; }
+.folder-toggle:hover { background: var(--hover-bg); }
+.folder-toggle svg { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transform: rotate(90deg); transition: transform .15s ease; }
+.folder.closed .folder-toggle svg { transform: none; }
+.folder .group-title .folder-name { margin: 0; color: inherit; font-weight: 600; }
+.folder .group-title .folder-count { margin: 0; }
+.folder.closed .add-row { display: none; }
+@media (prefers-reduced-motion: reduce) { .folder-toggle svg { transition: none; } }
 .rows { position: relative; margin: 0; padding: 0; list-style: none; }
 
 /* Rows */
@@ -350,15 +368,15 @@ body[data-view="goals"] .page-heading button, body[data-view="goals"] .search-ba
 /* Planning in a window too narrow for the days side by side: the list beside them, the days one under another */
 @media (max-width: 1000px) {
   body.planning .column { max-width: 1000px; }
-  body.planning #groups { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); column-gap: 24px; align-items: start; }
+  body.planning #groups { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); column-gap: 24px; align-items: start; }
   body.planning #groups > .group { grid-column: 2; margin: 0 0 12px; }
-  body.planning #groups > .group.backlog { grid-column: 1; grid-row: 1 / span 7; position: sticky; top: 0; height: calc(100vh - 182px); overflow-y: auto; }
+  body.planning #groups > .backlog { grid-column: 1; grid-row: 1 / span 7; position: sticky; top: 0; height: calc(100vh - 182px); overflow-y: auto; }
 }
 
 /* A narrow window, such as one kept beside other work */
 @media (max-width: 680px) {
   body.planning #groups { display: block; }
-  body.planning #groups > .group.backlog { position: static; height: auto; max-height: 45vh; }
+  body.planning #groups > .backlog { position: static; height: auto; max-height: 45vh; }
   .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .sidebar { flex-direction: row; align-items: center; gap: 2px; padding: 8px 12px; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--border); }
   .nav-group { flex-direction: row; }

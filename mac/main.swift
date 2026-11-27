@@ -407,7 +407,7 @@ final class JotPanel: NSPanel {
         menu("View", [
             command("Today", "today", "t"),
             command("Week", "week", "u"),
-            command("Plan Week", "plan", "U"),
+            command("Sprint Plan", "plan", "U"),
             command("Inbox", "inbox", "i"),
             command("Repeating", "habits"),
             command("Goals", "goals"),

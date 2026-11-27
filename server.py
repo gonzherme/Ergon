@@ -63,8 +63,9 @@ MAX_REPEAT_INTERVAL = 99
 
 TASK_FIELDS = ("id", "title", "project_id", "day", "day_rank", "list_rank",
                "remind_at", "reminded_at", "done_at", "repeat", "next_id", "series_id", "habit_rank", "overdue_rank",
-               "minutes")
+               "minutes", "folder_id")
 PROJECT_FIELDS = ("id", "title", "description", "rank", "completed_at")
+FOLDER_FIELDS = ("id", "title", "rank")
 BOX_FIELDS = ("id", "text", "x", "y")
 ARROW_FIELDS = ("id", "from_id", "to_id")
 MAX_BOX_TEXT = 2000
@@ -103,8 +104,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     next_id TEXT,                            -- the task finishing this repeating one created
     series_id TEXT,                          -- shared by every date of a habit, finished or not
     minutes INTEGER,                         -- how long it takes, as planned; NULL when not said
+    folder_id TEXT REFERENCES folders(id),   -- its folder in Repeating, while it repeats
     reminded_at TEXT,
     done_at TEXT,
+    deleted_at TEXT,
+    created_at TEXT NOT NULL
+);
+-- Folders in Repeating, each holding some of the repeating tasks.
+CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    rank INTEGER NOT NULL DEFAULT 0,
     deleted_at TEXT,
     created_at TEXT NOT NULL
 );
@@ -172,7 +182,7 @@ def initialize_database() -> None:
         for table, column in (("projects", "description TEXT NOT NULL DEFAULT ''"),
                               ("tasks", "repeat TEXT"), ("tasks", "next_id TEXT"), ("tasks", "series_id TEXT"),
                               ("tasks", "habit_rank INTEGER"), ("tasks", "overdue_rank INTEGER"),
-                              ("tasks", "minutes INTEGER")):
+                              ("tasks", "minutes INTEGER"), ("tasks", "folder_id TEXT REFERENCES folders(id)")):
             if not any(info[1] == column.split()[0] for info in connection.execute(f"PRAGMA table_info({table})")):
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
         # Habits made before Habits could be put in order go after the rest, soonest first.
@@ -204,6 +214,10 @@ def initialize_database() -> None:
                OR from_id IN (SELECT id FROM boxes WHERE deleted_at < ?) OR to_id IN (SELECT id FROM boxes WHERE deleted_at < ?)
         """, (cutoff, cutoff, cutoff))
         connection.execute("DELETE FROM boxes WHERE deleted_at < ?", (cutoff,))
+        # A folder deleted long ago lets go of its tasks, which stayed in it in case of Undo.
+        connection.execute("UPDATE tasks SET folder_id = NULL WHERE folder_id IN (SELECT id FROM folders WHERE deleted_at < ?)",
+                           (cutoff,))
+        connection.execute("DELETE FROM folders WHERE deleted_at < ?", (cutoff,))
 
 
 def _touch(connection: sqlite3.Connection) -> None:
@@ -359,17 +373,17 @@ def _advance(connection: sqlite3.Connection, task, finishing: bool = True) -> di
 
 
 def _repeat_task(connection: sqlite3.Connection, task: dict, next_id: str) -> bool:
-    """Adds the next date of a repeating task as a task of its own, in the same place in its project."""
+    """Adds the next date of a repeating task as a task of its own, in the same place in its project and folder."""
     advanced = _advance(connection, task)
     if advanced is None:
         return False
     connection.execute("""
         INSERT INTO tasks (id, title, project_id, day, day_rank, list_rank, habit_rank, remind_at, reminded_at, repeat,
-                           series_id, minutes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           series_id, minutes, folder_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (next_id, task["title"], task["project_id"], advanced["day"], _next_day_rank(connection, advanced["day"]),
           task["list_rank"], task["habit_rank"], advanced.get("remind_at"), advanced.get("reminded_at"), task["repeat"],
-          task["series_id"] or task["id"], task["minutes"], _now()))
+          task["series_id"] or task["id"], task["minutes"], task["folder_id"], _now()))
     return True
 
 
@@ -406,6 +420,9 @@ def _state() -> dict:
         projects = connection.execute(
             f"SELECT {', '.join(PROJECT_FIELDS)} FROM projects WHERE deleted_at IS NULL ORDER BY rank, created_at"
         ).fetchall()
+        folders = connection.execute(
+            f"SELECT {', '.join(FOLDER_FIELDS)} FROM folders WHERE deleted_at IS NULL ORDER BY rank, created_at"
+        ).fetchall()
         tasks = connection.execute(f"""
             SELECT {', '.join(TASK_FIELDS)} FROM tasks
             WHERE deleted_at IS NULL
@@ -425,6 +442,7 @@ def _state() -> dict:
             "tag": _state_tag(connection),
             "today": _today(),
             "projects": [dict(row) for row in projects],
+            "folders": [dict(row) for row in folders],
             "tasks": [dict(row) for row in tasks],
             "boxes": [dict(row) for row in boxes],
             "arrows": [dict(row) for row in arrows],
@@ -498,6 +516,17 @@ def _valid_project(connection: sqlite3.Connection, value) -> str | None:
     return project["id"]
 
 
+def _valid_folder(connection: sqlite3.Connection, value) -> str | None:
+    if value is None:
+        return None
+    folder = connection.execute(
+        "SELECT id FROM folders WHERE id = ? AND deleted_at IS NULL", (_valid_id(value),)
+    ).fetchone()
+    if folder is None:
+        raise ValueError("That folder does not exist.")
+    return folder["id"]
+
+
 def _parse_list(connection: sqlite3.Connection, value) -> tuple[str | None, str | None]:
     """Returns the (day, project_id) a list name refers to: inbox, day:…, or project:…."""
     if value == "inbox":
@@ -516,13 +545,14 @@ def _create_task(payload: dict) -> None:
     minutes = None if payload.get("minutes") is None else _valid_minutes(payload["minutes"])
     with _database() as connection:
         day, project_id = _parse_list(connection, payload.get("list"))
+        folder_id = _valid_folder(connection, payload.get("folder_id"))
         connection.execute("""
-            INSERT INTO tasks (id, title, project_id, day, day_rank, list_rank, minutes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, title, project_id, day, day_rank, list_rank, minutes, folder_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (task_id, title, project_id, day,
               _next_day_rank(connection, day) if day else 0,
               0 if day else _next_list_rank(connection, project_id),
-              minutes, _now()))
+              minutes, folder_id, _now()))
         # A habit starts as a task with a repeat.
         if "repeat" in payload:
             _change_task(connection, task_id, {"repeat": payload["repeat"]})
@@ -553,6 +583,8 @@ def _change_task(connection: sqlite3.Connection, task_id: str, payload: dict) ->
         changes["reminded_at"] = None
     if "minutes" in payload:
         changes["minutes"] = None if payload["minutes"] is None else _valid_minutes(payload["minutes"])
+    if "folder_id" in payload:
+        changes["folder_id"] = _valid_folder(connection, payload["folder_id"])
     if payload.get("skip") and task["repeat"] and not task["done_at"]:
         advanced = _advance(connection, task, finishing=False)
         if advanced is None:
@@ -626,6 +658,32 @@ def _create_project(payload: dict) -> None:
         ).fetchone()["rank"]
         connection.execute("INSERT INTO projects (id, title, rank, created_at) VALUES (?, ?, ?, ?)",
                            (project_id, title, rank, _now()))
+        _touch(connection)
+
+
+def _create_folder(payload: dict) -> None:
+    folder_id = _valid_id(payload.get("id"))
+    title = _valid_title(payload.get("title"))
+    with _database() as connection:
+        rank = connection.execute(
+            "SELECT COALESCE(MAX(rank), -1) + 1 AS rank FROM folders WHERE deleted_at IS NULL"
+        ).fetchone()["rank"]
+        connection.execute("INSERT INTO folders (id, title, rank, created_at) VALUES (?, ?, ?, ?)",
+                           (folder_id, title, rank, _now()))
+        _touch(connection)
+
+
+def _update_folder(folder_id: str, payload: dict) -> None:
+    """Renames a folder, or deletes it. Its tasks keep it while deleted, so Undo brings them back in;
+    meanwhile they show in Repeating outside any folder."""
+    with _database() as connection:
+        if connection.execute("SELECT id FROM folders WHERE id = ?", (folder_id,)).fetchone() is None:
+            raise LookupError("That folder does not exist.")
+        if "title" in payload:
+            connection.execute("UPDATE folders SET title = ? WHERE id = ?", (_valid_title(payload["title"]), folder_id))
+        if "deleted" in payload:
+            connection.execute("UPDATE folders SET deleted_at = ? WHERE id = ?",
+                               (_now() if payload["deleted"] else None, folder_id))
         _touch(connection)
 
 
@@ -985,6 +1043,8 @@ class ErgonHandler(BaseHTTPRequestHandler):
             self._write(_create_task)
         elif path == "/api/projects":
             self._write(_create_project)
+        elif path == "/api/folders":
+            self._write(_create_folder)
         elif path == "/api/order":
             self._write(_set_order)
         elif path == "/api/boxes":
@@ -1002,6 +1062,9 @@ class ErgonHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/projects/"):
             project_id = path.removeprefix("/api/projects/")
             self._write(lambda payload: _update_project(project_id, payload))
+        elif path.startswith("/api/folders/"):
+            folder_id = path.removeprefix("/api/folders/")
+            self._write(lambda payload: _update_folder(folder_id, payload))
         elif path.startswith("/api/boxes/"):
             box_id = path.removeprefix("/api/boxes/")
             self._write(lambda payload: _update_box(box_id, payload))

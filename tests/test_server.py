@@ -642,6 +642,53 @@ class PlanningTests(ServerTestCase):
             self.assertEqual(self.call("PATCH", "/api/time", wrong)[0], 400, wrong)
 
 
+class FolderTests(ServerTestCase):
+    def add_folder(self, title):
+        folder_id = str(uuid4())
+        self.assertEqual(self.call("POST", "/api/folders", {"id": folder_id, "title": title})[0], 200)
+        return folder_id
+
+    def test_folders_hold_repeating_tasks_in_their_order(self):
+        sport, birthdays = self.add_folder("Deporte"), self.add_folder("Birthdays")
+        self.assertEqual([(f["title"], f["rank"]) for f in self.state()["folders"]], [("Deporte", 0), ("Birthdays", 1)])
+        task_id = str(uuid4())
+        body = {"id": task_id, "title": "Ana", "list": f"day:{TOMORROW}", "repeat": "FREQ=YEARLY", "folder_id": birthdays}
+        self.assertEqual(self.call("POST", "/api/tasks", body)[0], 200)
+        self.assertEqual(self.task(task_id)["folder_id"], birthdays)
+        gym = self.add_task("Push", f"day:{TODAY}")
+        self.repeat(gym, "FREQ=DAILY")
+        self.assertIsNone(self.task(gym)["folder_id"])
+        self.assertEqual(self.call("PATCH", f"/api/tasks/{gym}", {"folder_id": sport})[0], 200)
+        self.assertEqual(self.task(gym)["folder_id"], sport)
+        self.assertEqual(self.call("PATCH", f"/api/folders/{sport}", {"title": "Sport"})[0], 200)
+        self.assertEqual([f["title"] for f in self.state()["folders"]], ["Sport", "Birthdays"])
+        for wrong in ({"title": " "}, {"id": "not an id", "title": "X"}):
+            self.assertEqual(self.call("POST", "/api/folders", wrong)[0], 400, wrong)
+        self.assertEqual(self.call("PATCH", f"/api/tasks/{gym}", {"folder_id": str(uuid4())})[0], 400)
+        self.assertEqual(self.call("PATCH", f"/api/folders/{uuid4()}", {"title": "Nowhere"})[0], 404)
+
+    def test_a_repeating_tasks_next_date_stays_in_its_folder(self):
+        sport = self.add_folder("Deporte")
+        gym = self.add_task("Push", f"day:{TODAY}")
+        self.repeat(gym, "FREQ=DAILY")
+        self.call("PATCH", f"/api/tasks/{gym}", {"folder_id": sport})
+        self.finish(gym)
+        self.assertEqual([found["folder_id"] for found in self.open_with_title("Push")], [sport])
+
+    def test_a_deleted_folder_keeps_its_tasks_for_undo(self):
+        sport = self.add_folder("Deporte")
+        gym = self.add_task("Push", f"day:{TODAY}")
+        self.repeat(gym, "FREQ=DAILY")
+        self.call("PATCH", f"/api/tasks/{gym}", {"folder_id": sport})
+        self.assertEqual(self.call("PATCH", f"/api/folders/{sport}", {"deleted": True})[0], 200)
+        self.assertEqual(self.state()["folders"], [])
+        self.assertEqual(self.task(gym)["folder_id"], sport)
+        # Nothing new goes into a deleted folder, until Undo brings it back.
+        self.assertEqual(self.call("PATCH", f"/api/tasks/{gym}", {"folder_id": sport})[0], 400)
+        self.assertEqual(self.call("PATCH", f"/api/folders/{sport}", {"deleted": False})[0], 200)
+        self.assertEqual([f["id"] for f in self.state()["folders"]], [sport])
+
+
 class GoalTests(ServerTestCase):
     def add_box(self, text, x=0, y=0):
         box_id = str(uuid4())

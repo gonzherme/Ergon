@@ -74,11 +74,14 @@
                 <button class="step-button" id="goals-all" type="button">Show All</button>
                 <button class="step-button" id="goals-in" type="button" aria-label="Zoom in">+</button>
               </div>
+              <div class="week-nav" id="habits-nav" hidden>
+                <button class="step-button" id="new-folder" type="button">New Folder</button>
+              </div>
               <div class="week-nav" id="week-nav" hidden>
                 <button class="step-button" id="week-prev" type="button" aria-label="Previous week">‹</button>
                 <button class="step-button" id="week-today" type="button">Today</button>
                 <button class="step-button" id="week-next" type="button" aria-label="Next week">›</button>
-                <button class="step-button plan-button" id="week-plan" type="button">Plan</button>
+                <button class="step-button plan-button" id="week-plan" type="button">Sprint Plan</button>
               </div>
             </div>
             <p id="page-subtitle"></p>
@@ -109,7 +112,7 @@
         <h2>Shortcuts</h2>
         <dl>
           <dt><kbd>⌘ T</kbd> <kbd>⌘ U</kbd> <kbd>⌘ I</kbd></dt><dd>Today, Week, Inbox</dd>
-          <dt><kbd>⇧ ⌘ U</kbd></dt><dd>Plan the week, from the Inbox or a project</dd>
+          <dt><kbd>⇧ ⌘ U</kbd></dt><dd>Sprint Plan: the coming week, beside the Inbox or a project</dd>
           <dt><kbd>⌘ J</kbd></dt><dd>Jot to Inbox, from any view</dd>
           <dt><kbd>⌃ ⌥ Space</kbd></dt><dd>Jot to Inbox from any app, with Ergon's Mac app open</dd>
           <dt><kbd>⌘ L</kbd></dt><dd>Search all tasks</dd>
@@ -120,13 +123,14 @@
           <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous or next week, in Week</dd>
           <dt>Mouse side buttons</dt><dd>Previous or next day in Today, week in Week</dd>
           <dt><kbd>⌥ ←</kbd> <kbd>⌥ →</kbd></dt><dd>Move the selected task a day, in Week</dd>
-          <dt>Right-click</dt><dd>A task's actions</dd>
+          <dt>Right-click</dt><dd>A task's actions, or a folder's in Repeating</dd>
           <dt><kbd>Enter</kbd></dt><dd>Mark done, or save an edit</dd>
           <dt><kbd>e</kbd></dt><dd>Edit</dd>
           <dt><kbd>t</kbd></dt><dd>Move to Today, or off it</dd>
           <dt><kbd>d</kbd></dt><dd>Pick a day</dd>
           <dt><kbd>r</kbd></dt><dd>Set a reminder</dd>
           <dt><kbd>p</kbd></dt><dd>Move to a project</dd>
+          <dt><kbd>f</kbd></dt><dd>Move a repeating task to a folder</dd>
           <dt><kbd>m</kbd></dt><dd>Time it takes, such as 4h, 15m or 1h30m, in the box at its end (or end a task with ~1h)</dd>
           <dt><kbd>⌫</kbd></dt><dd>Delete</dd>
           <dt><kbd>n</kbd></dt><dd>Add a task, or a box in Goals</dd>
